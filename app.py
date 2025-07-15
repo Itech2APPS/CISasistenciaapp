@@ -17,7 +17,7 @@ def procesar_pdf(pdf_bytes):
         texto = pagina.get_text("text")
         lineas = texto.splitlines()
 
-        # Obtener mes desde línea "Periodo desde"
+        # Extraer mes desde línea "Periodo desde"
         mes = "Mes"
         for linea in lineas:
             match = re.search(r"Periodo desde (\d{2}/\d{2}/\d{4})", linea)
@@ -30,22 +30,26 @@ def procesar_pdf(pdf_bytes):
                     ]
                     mes = meses_es[fecha.month - 1]
                     break
-                except:
-                    pass
+                except Exception as e:
+                    st.warning(f"Error al convertir fecha: {e}")
+                    break
 
-        # Buscar línea después de "Empleado" para extraer RUT y nombre
+        # Buscar línea que diga "Empleado" y usar la siguiente
         rut = "RUT"
         nombre = "NOMBRE"
         for idx, linea in enumerate(lineas):
-            if linea.strip() == "Empleado" and idx + 1 < len(lineas):
-                siguiente = lineas[idx + 1]
-                match = re.match(r"([\d\.\-]+)\s*-\s*(.+)", siguiente)
-                if match:
-                    rut = match.group(1)
-                    nombre = match.group(2).strip().upper()
-                    break
+            if linea.strip().lower() == "empleado":
+                if idx + 1 < len(lineas):
+                    siguiente = lineas[idx + 1].strip()
+                    partes = siguiente.split(" - ")
+                    if len(partes) == 2:
+                        rut = partes[0].strip()
+                        nombre = partes[1].strip().upper()
+                    else:
+                        st.warning(f"No se pudo separar RUT y nombre en: {siguiente}")
+                break
 
-        # Crear nombre de archivo
+        # Crear nombre del archivo
         nombre_archivo = f"ASISTENCIA_{mes}_{rut}_{nombre.replace(' ', '_')}.pdf"
         ruta_archivo = os.path.join(output_dir, nombre_archivo)
 
