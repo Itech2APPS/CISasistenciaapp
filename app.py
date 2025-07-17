@@ -86,3 +86,6 @@ if pdf_file:
             file_name="asistencias_divididas.zip",
             mime="application/zip"
         )
+# 👣 Footer opcional
+st.markdown("<hr style='margin-top:40px;'>", unsafe_allow_html=True)
+st.markdown("Desarrollado por Ismael León – © 2025", unsafe_allow_html=True)
