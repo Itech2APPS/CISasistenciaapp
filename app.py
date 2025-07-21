@@ -1,91 +1,107 @@
 import streamlit as st
-import fitz  # PyMuPDF
 import os
 import re
 import zipfile
-from io import BytesIO
-from datetime import datetime
+import tempfile
+from PyPDF2 import PdfReader, PdfWriter
 
-def procesar_pdf(pdf_bytes):
-    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    output_dir = "pdfs_asistencia"
-    os.makedirs(output_dir, exist_ok=True)
-    archivos_generados = []
+def extraer_datos(texto, rut_empleador="65.191.111-1"):
+    meses = {
+        "01": "ENERO", "02": "FEBRERO", "03": "MARZO", "04": "ABRIL",
+        "05": "MAYO", "06": "JUNIO", "07": "JULIO", "08": "AGOSTO",
+        "09": "SEPTIEMBRE", "10": "OCTUBRE", "11": "NOVIEMBRE", "12": "DICIEMBRE"
+    }
 
-    for i in range(0, len(doc), 2):  # Solo páginas impares
-        pagina = doc[i]
-        texto = pagina.get_text("text")
-        lineas = texto.splitlines()
+    mes_match = re.search(r'Periodo desde\s+\d{2}/(\d{2})/\d{4}', texto)
+    mes_num = mes_match.group(1) if mes_match else "XX"
+    mes = meses.get(mes_num, "MES")
 
-        # Extraer mes desde línea "Periodo desde"
-        mes = "Mes"
-        for linea in lineas:
-            match = re.search(r"Periodo desde (\d{2}/\d{2}/\d{4})", linea)
-            if match:
-                try:
-                    fecha = datetime.strptime(match.group(1), "%d/%m/%Y")
-                    meses_es = [
-                        "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
-                        "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
-                    ]
-                    mes = meses_es[fecha.month - 1]
-                    break
-                except Exception as e:
-                    st.warning(f"Error al convertir fecha: {e}")
-                    break
+    rut_matches = re.findall(r'RUT:\s*([\d\.]+\-\d)', texto)
+    rut = next((r for r in rut_matches if r != rut_empleador), None)
 
-        # Buscar línea que diga "Empleado" y usar la siguiente
-        rut = "RUT"
-        nombre = "NOMBRE"
-        for idx, linea in enumerate(lineas):
-            if linea.strip().lower() == "empleado":
-                if idx + 1 < len(lineas):
-                    siguiente = lineas[idx + 1].strip()
-                    partes = siguiente.split(" - ")
-                    if len(partes) == 2:
-                        rut = partes[0].strip()
-                        nombre = partes[1].strip().upper()
-                    else:
-                        st.warning(f"No se pudo separar RUT y nombre en: {siguiente}")
+    nombre = "SIN_NOMBRE"
+    if rut:
+        lines = texto.splitlines()
+        nombre_lines = []
+        for i, line in enumerate(lines):
+            if rut.replace(".", "") in line.replace(".", ""):
+                for j in range(i + 1, min(i + 10, len(lines))):
+                    next_line = lines[j].strip()
+                    if re.search(r'(Sucursal|Departamento|Código|RUT|Fecha|Empleado)', next_line, re.IGNORECASE):
+                        break
+                    if re.match(r'^[A-ZÁÉÍÓÚÑ ]+$', next_line):
+                        nombre_lines.append(next_line)
                 break
+        if nombre_lines:
+            nombre = " ".join(nombre_lines).strip()
 
-        # Crear nombre del archivo
-        nombre_archivo = f"ASISTENCIA_{mes}_{rut}_{nombre.replace(' ', '_')}.pdf"
-        ruta_archivo = os.path.join(output_dir, nombre_archivo)
+    nombre_limpio = re.sub(r"[^\w\s]", "", nombre)
+    nombre_limpio = re.sub(r"\s+", " ", nombre_limpio).upper().strip()
 
-        # Guardar PDF individual
-        nuevo_pdf = fitz.open()
-        nuevo_pdf.insert_pdf(doc, from_page=i, to_page=i)
-        nuevo_pdf.save(ruta_archivo)
-        nuevo_pdf.close()
+    return mes, rut, nombre_limpio
 
-        archivos_generados.append(ruta_archivo)
+def generar_pdfs_por_empleado(pdf_file):
+    reader = PdfReader(pdf_file)
+    rut_empleador = "65.191.111-1"
+    pdf_count = 0
 
-    # Crear ZIP con todos los archivos
-    zip_buffer = BytesIO()
-    with zipfile.ZipFile(zip_buffer, "w") as zipf:
-        for archivo in archivos_generados:
-            zipf.write(archivo, os.path.basename(archivo))
-    zip_buffer.seek(0)
-    return zip_buffer
+    with tempfile.TemporaryDirectory() as tempdir:
+        zip_path = os.path.join(tempdir, "asistencias_individuales.zip")
+        pdf_dir = os.path.join(tempdir, "pdfs")
+        os.makedirs(pdf_dir, exist_ok=True)
 
-# Interfaz Streamlit
-st.set_page_config(page_title="Dividir Asistencia PDF", layout="centered")
-st.title("🧾 Dividir Planillas de Asistencia por Trabajador")
+        for i, page in enumerate(reader.pages):
+            text = page.extract_text()
+            if not text:
+                continue
 
-pdf_file = st.file_uploader("Sube el archivo PDF de asistencia", type="pdf")
+            mes, rut, nombre = extraer_datos(text, rut_empleador)
+            if not rut or not nombre:
+                continue
 
-if pdf_file:
-    with st.spinner("Procesando PDF..."):
-        zip_resultado = procesar_pdf(pdf_file.read())
-        st.success("¡PDFs generados y comprimidos correctamente!")
+            base_filename = f"ASISTENCIA_{mes}_{rut}_{nombre}"
+            filename = base_filename + ".pdf"
+            counter = 1
+            while os.path.exists(os.path.join(pdf_dir, filename)):
+                filename = f"{base_filename}_{counter}.pdf"
+                counter += 1
 
-        st.download_button(
-            label="📦 Descargar archivo ZIP",
-            data=zip_resultado,
-            file_name="asistencias_divididas.zip",
-            mime="application/zip"
-        )
-# 👣 Footer opcional
-st.markdown("<hr style='margin-top:40px;'>", unsafe_allow_html=True)
-st.markdown("Desarrollado por Ismael León – © 2025", unsafe_allow_html=True)
+            filepath = os.path.join(pdf_dir, filename)
+
+            writer = PdfWriter()
+            writer.add_page(page)
+            with open(filepath, "wb") as f_out:
+                writer.write(f_out)
+            pdf_count += 1
+
+        with zipfile.ZipFile(zip_path, "w") as zipf:
+            for file in os.listdir(pdf_dir):
+                zipf.write(os.path.join(pdf_dir, file), arcname=file)
+
+        with open(zip_path, "rb") as f:
+            zip_bytes = f.read()
+
+    return zip_bytes, pdf_count
+
+# ---- INTERFAZ STREAMLIT ----
+
+st.set_page_config(page_title="Asistencia por empleado", layout="centered")
+st.title("📄 Generador de PDFs de Asistencia por Empleado")
+
+st.markdown("""
+Sube el archivo PDF generado por el sistema de asistencia. La aplicación procesará cada página, extraerá los datos del trabajador y generará un PDF individual por empleado.
+""")
+
+uploaded_file = st.file_uploader("📎 Sube el archivo PDF de asistencia", type=["pdf"])
+
+if uploaded_file is not None:
+    with st.spinner("Procesando páginas y generando archivos..."):
+        zip_bytes, total = generar_pdfs_por_empleado(uploaded_file)
+
+    st.success(f"✅ Se generaron {total} archivos PDF.")
+    st.download_button(
+        label="📥 Descargar ZIP con todos los PDFs",
+        data=zip_bytes,
+        file_name="asistencias_por_empleado.zip",
+        mime="application/zip"
+    )
