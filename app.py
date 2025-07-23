@@ -1,107 +1,81 @@
 import streamlit as st
-import os
 import re
+import calendar
 import zipfile
-import tempfile
+from io import BytesIO
+from pathlib import Path
 from PyPDF2 import PdfReader, PdfWriter
 
-def extraer_datos(texto, rut_empleador="65.191.111-1"):
-    meses = {
-        "01": "ENERO", "02": "FEBRERO", "03": "MARZO", "04": "ABRIL",
-        "05": "MAYO", "06": "JUNIO", "07": "JULIO", "08": "AGOSTO",
-        "09": "SEPTIEMBRE", "10": "OCTUBRE", "11": "NOVIEMBRE", "12": "DICIEMBRE"
-    }
+# Diccionario meses en español
+meses_es = {
+    "January": "Enero", "February": "Febrero", "March": "Marzo",
+    "April": "Abril", "May": "Mayo", "June": "Junio",
+    "July": "Julio", "August": "Agosto", "September": "Septiembre",
+    "October": "Octubre", "November": "Noviembre", "December": "Diciembre"
+}
 
-    mes_match = re.search(r'Periodo desde\s+\d{2}/(\d{2})/\d{4}', texto)
-    mes_num = mes_match.group(1) if mes_match else "XX"
-    mes = meses.get(mes_num, "MES")
+def extraer_mes(texto):
+    match = re.search(r"Periodo desde\s+(\d{2})/(\d{2})/(\d{4})", texto)
+    if match:
+        mes_num = int(match.group(2))
+        mes_en = calendar.month_name[mes_num]
+        return meses_es.get(mes_en, "Mes")
+    return "Mes"
 
-    rut_matches = re.findall(r'RUT:\s*([\d\.]+\-\d)', texto)
-    rut = next((r for r in rut_matches if r != rut_empleador), None)
+def extraer_rut(texto):
+    match = re.search(r"(\d{1,3}(?:\.\d{3}){2}-\d)", texto)
+    if match:
+        rut = match.group(1)
+        if not rut.startswith("65.191"):
+            return rut
+    return None
 
-    nombre = "SIN_NOMBRE"
-    if rut:
-        lines = texto.splitlines()
-        nombre_lines = []
-        for i, line in enumerate(lines):
-            if rut.replace(".", "") in line.replace(".", ""):
-                for j in range(i + 1, min(i + 10, len(lines))):
-                    next_line = lines[j].strip()
-                    if re.search(r'(Sucursal|Departamento|Código|RUT|Fecha|Empleado)', next_line, re.IGNORECASE):
-                        break
-                    if re.match(r'^[A-ZÁÉÍÓÚÑ ]+$', next_line):
-                        nombre_lines.append(next_line)
-                break
-        if nombre_lines:
-            nombre = " ".join(nombre_lines).strip()
+def extraer_nombre(texto):
+    match = re.search(r"\d{1,3}(?:\.\d{3}){2}-\d\s+([A-ZÁÉÍÓÚÑ ]+)", texto)
+    if match:
+        return match.group(1).strip().title()
+    return "Nombre_Desconocido"
 
-    nombre_limpio = re.sub(r"[^\w\s]", "", nombre)
-    nombre_limpio = re.sub(r"\s+", " ", nombre_limpio).upper().strip()
+def procesar_pdf(uploaded_file):
+    reader = PdfReader(uploaded_file)
+    zip_buffer = BytesIO()
 
-    return mes, rut, nombre_limpio
-
-def generar_pdfs_por_empleado(pdf_file):
-    reader = PdfReader(pdf_file)
-    rut_empleador = "65.191.111-1"
-    pdf_count = 0
-
-    with tempfile.TemporaryDirectory() as tempdir:
-        zip_path = os.path.join(tempdir, "asistencias_individuales.zip")
-        pdf_dir = os.path.join(tempdir, "pdfs")
-        os.makedirs(pdf_dir, exist_ok=True)
-
-        for i, page in enumerate(reader.pages):
+    with zipfile.ZipFile(zip_buffer, "w") as zipf:
+        for i in range(0, len(reader.pages), 2):  # solo páginas impares
+            page = reader.pages[i]
             text = page.extract_text()
-            if not text:
-                continue
 
-            mes, rut, nombre = extraer_datos(text, rut_empleador)
-            if not rut or not nombre:
-                continue
+            mes = extraer_mes(text)
+            rut = extraer_rut(text)
+            nombre = extraer_nombre(text)
 
-            base_filename = f"ASISTENCIA_{mes}_{rut}_{nombre}"
-            filename = base_filename + ".pdf"
-            counter = 1
-            while os.path.exists(os.path.join(pdf_dir, filename)):
-                filename = f"{base_filename}_{counter}.pdf"
-                counter += 1
+            if rut:
+                filename = f"ASISTENCIA_{mes}_{rut}_{nombre}.pdf".replace(" ", "_")
+                pdf_bytes = BytesIO()
+                writer = PdfWriter()
+                writer.add_page(page)
+                writer.write(pdf_bytes)
+                pdf_bytes.seek(0)
 
-            filepath = os.path.join(pdf_dir, filename)
+                zipf.writestr(filename, pdf_bytes.read())
 
-            writer = PdfWriter()
-            writer.add_page(page)
-            with open(filepath, "wb") as f_out:
-                writer.write(f_out)
-            pdf_count += 1
+    zip_buffer.seek(0)
+    return zip_buffer
 
-        with zipfile.ZipFile(zip_path, "w") as zipf:
-            for file in os.listdir(pdf_dir):
-                zipf.write(os.path.join(pdf_dir, file), arcname=file)
+# Streamlit UI
+st.set_page_config(page_title="Generador de Asistencias", layout="centered")
+st.title("Generador de Asistencias Individuales")
+st.write("Sube el archivo PDF para generar los documentos individuales por empleado (páginas impares solamente).")
 
-        with open(zip_path, "rb") as f:
-            zip_bytes = f.read()
+uploaded_file = st.file_uploader("Selecciona el archivo PDF de asistencia:", type=["pdf"])
 
-    return zip_bytes, pdf_count
-
-# ---- INTERFAZ STREAMLIT ----
-
-st.set_page_config(page_title="Asistencia por empleado", layout="centered")
-st.title("📄 Generador de PDFs de Asistencia por Empleado")
-
-st.markdown("""
-Sube el archivo PDF generado por el sistema de asistencia. La aplicación procesará cada página, extraerá los datos del trabajador y generará un PDF individual por empleado.
-""")
-
-uploaded_file = st.file_uploader("📎 Sube el archivo PDF de asistencia", type=["pdf"])
-
-if uploaded_file is not None:
-    with st.spinner("Procesando páginas y generando archivos..."):
-        zip_bytes, total = generar_pdfs_por_empleado(uploaded_file)
-
-    st.success(f"✅ Se generaron {total} archivos PDF.")
-    st.download_button(
-        label="📥 Descargar ZIP con todos los PDFs",
-        data=zip_bytes,
-        file_name="asistencias_por_empleado.zip",
-        mime="application/zip"
-    )
+if uploaded_file:
+    with st.spinner("Procesando archivo..."):
+        zip_result = procesar_pdf(uploaded_file)
+        st.success("Proceso completado. Descarga el archivo ZIP a continuación:")
+        st.download_button(
+            label="💾 Descargar ZIP",
+            data=zip_result,
+            file_name="ASISTENCIAS_SEPARADAS.zip",
+            mime="application/zip"
+        )
