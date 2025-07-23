@@ -6,7 +6,7 @@ from io import BytesIO
 from pathlib import Path
 from PyPDF2 import PdfReader, PdfWriter
 
-# Diccionario meses en español
+# Diccionario meses en español - Creado por Ismael Leon
 meses_es = {
     "January": "Enero", "February": "Febrero", "March": "Marzo",
     "April": "Abril", "May": "Mayo", "June": "Junio",
@@ -62,10 +62,10 @@ def procesar_pdf(uploaded_file):
     zip_buffer.seek(0)
     return zip_buffer
 
-# Streamlit UI
+# Streamlit UI - Creado por Ismael Leon
 st.set_page_config(page_title="Generador de Asistencias", layout="centered")
 st.title("Generador de Asistencias Individuales")
-st.write("Sube el archivo PDF para generar los documentos individuales por empleado (páginas impares solamente).")
+st.write("Sube el archivo PDF para generar los documentos individuales por empleado.")
 
 uploaded_file = st.file_uploader("Selecciona el archivo PDF de asistencia:", type=["pdf"])
 
@@ -79,3 +79,6 @@ if uploaded_file:
             file_name="ASISTENCIAS_SEPARADAS.zip",
             mime="application/zip"
         )
+# 👣 Footer opcional
+st.markdown("<hr style='margin-top:40px;'>", unsafe_allow_html=True)
+st.markdown("Desarrollado por Ismael León – © 2025", unsafe_allow_html=True)
