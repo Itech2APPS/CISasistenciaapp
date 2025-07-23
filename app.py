@@ -76,7 +76,7 @@ if uploaded_file:
         st.download_button(
             label="💾 Descargar ZIP",
             data=zip_result,
-            file_name="ASISTENCIAS_SEPARADAS.zip",
+            file_name="ASISTENCIAS.zip",
             mime="application/zip"
         )
 # 👣 Footer opcional
