@@ -1,84 +1,110 @@
 import streamlit as st
+import fitz  # PyMuPDF
 import re
-import calendar
-import zipfile
-from io import BytesIO
-from pathlib import Path
-from PyPDF2 import PdfReader, PdfWriter
+import os
+from zipfile import ZipFile
+import tempfile
 
-# Diccionario meses en español - Creado por Ismael Leon
-meses_es = {
-    "January": "Enero", "February": "Febrero", "March": "Marzo",
-    "April": "Abril", "May": "Mayo", "June": "Junio",
-    "July": "Julio", "August": "Agosto", "September": "Septiembre",
-    "October": "Octubre", "November": "Noviembre", "December": "Diciembre"
-}
+# --- FUNCIONES ---
 
-def extraer_mes(texto):
-    match = re.search(r"Periodo desde\s+(\d{2})/(\d{2})/(\d{4})", texto)
-    if match:
-        mes_num = int(match.group(2))
-        mes_en = calendar.month_name[mes_num]
-        return meses_es.get(mes_en, "Mes")
-    return "Mes"
+def extraer_datos_por_lineas(texto):
+    lineas = texto.strip().splitlines()
+    if len(lineas) < 10:
+        return None, None, None
 
-def extraer_rut(texto):
-    match = re.search(r"(\d{1,3}(?:\.\d{3}){2}-\d)", texto)
-    if match:
-        rut = match.group(1)
-        if not rut.startswith("65.191"):
-            return rut
-    return None
+    # Línea 5: fecha en formato dd/mm/yyyy
+    linea_fecha = lineas[4].strip()
+    match_mes = re.search(r'\d{2}/(\d{2})/2025', linea_fecha)
+    mes_num = match_mes.group(1) if match_mes else None
 
-def extraer_nombre(texto):
-    match = re.search(r"\d{1,3}(?:\.\d{3}){2}-\d\s+([A-ZÁÉÍÓÚÑ ]+)", texto)
-    if match:
-        return match.group(1).strip().title()
-    return "Nombre_Desconocido"
+    meses = {
+        '01': 'ENERO', '02': 'FEBRERO', '03': 'MARZO', '04': 'ABRIL',
+        '05': 'MAYO', '06': 'JUNIO', '07': 'JULIO', '08': 'AGOSTO',
+        '09': 'SEPTIEMBRE', '10': 'OCTUBRE', '11': 'NOVIEMBRE', '12': 'DICIEMBRE'
+    }
+    mes = meses.get(mes_num, 'MES') if mes_num else None
 
-def procesar_pdf(uploaded_file):
-    reader = PdfReader(uploaded_file)
-    zip_buffer = BytesIO()
+    # Línea 8: RUT
+    rut = lineas[7].strip()
+    if rut.startswith("65.191"):
+        return None, None, None
 
-    with zipfile.ZipFile(zip_buffer, "w") as zipf:
-        for i in range(0, len(reader.pages), 2):  # solo páginas impares
-            page = reader.pages[i]
-            text = page.extract_text()
+    # Línea 9: nombre completo
+    nombre = lineas[8].strip()
 
-            mes = extraer_mes(text)
-            rut = extraer_rut(text)
-            nombre = extraer_nombre(text)
+    return mes, rut, nombre
 
-            if rut:
-                filename = f"ASISTENCIA_{mes}_{rut}_{nombre}.pdf".replace(" ", "_")
-                pdf_bytes = BytesIO()
-                writer = PdfWriter()
-                writer.add_page(page)
-                writer.write(pdf_bytes)
-                pdf_bytes.seek(0)
+def procesar_pdf(file, temp_dir, mostrar_texto=False):
+    doc = fitz.open(stream=file.read(), filetype="pdf")
+    archivos = []
+    vistas_previas = []
 
-                zipf.writestr(filename, pdf_bytes.read())
+    for i in range(0, len(doc), 2):  # solo páginas impares
+        pagina = doc.load_page(i)
+        texto = pagina.get_text().upper()
 
-    zip_buffer.seek(0)
-    return zip_buffer
+        if mostrar_texto:
+            vistas_previas.append((i + 1, texto))
 
-# Streamlit UI - Creado por Ismael Leon
-st.set_page_config(page_title="Generador de Asistencias", layout="centered")
-st.title("Generador de Asistencias Individuales")
-st.write("Sube el archivo PDF para generar los documentos individuales por empleado.")
+        mes, rut, nombre = extraer_datos_por_lineas(texto)
+        if not mes or not rut or not nombre:
+            continue
 
-uploaded_file = st.file_uploader("Selecciona el archivo PDF de asistencia:", type=["pdf"])
+        nombre_archivo = f"ASISTENCIA_{mes}_{rut}_{nombre}.pdf".replace(" ", "_")
+        ruta_pdf = os.path.join(temp_dir, nombre_archivo)
+
+        nuevo_pdf = fitz.open()
+        nuevo_pdf.insert_pdf(doc, from_page=i, to_page=i)
+        nuevo_pdf.save(ruta_pdf)
+        nuevo_pdf.close()
+        archivos.append(ruta_pdf)
+
+    if not archivos:
+        return None, vistas_previas
+
+    zip_path = os.path.join(temp_dir, "ASISTENCIAS.zip")
+    with ZipFile(zip_path, 'w') as zipf:
+        for archivo in archivos:
+            zipf.write(archivo, arcname=os.path.basename(archivo))
+
+    return zip_path, vistas_previas
+
+# --- INTERFAZ STREAMLIT ---
+
+st.set_page_config(page_title="Separador de Asistencia", page_icon="🗂️")
+st.title("🗂️ Separador de Asistencias por Persona")
+
+st.write("""
+Sube un archivo PDF con múltiples páginas de asistencia.  
+Se generará un PDF individual por cada persona (sólo en páginas impares), con nombre:
+`ASISTENCIA_MES_RUT_NOMBRE COMPLETO.pdf`
+""")
+
+uploaded_file = st.file_uploader("📤 Sube el archivo PDF", type="pdf")
+ver_texto = st.checkbox("🔍 Mostrar texto extraído por página impar")
 
 if uploaded_file:
-    with st.spinner("Procesando archivo..."):
-        zip_result = procesar_pdf(uploaded_file)
-        st.success("Proceso completado. Descarga el archivo ZIP a continuación:")
-        st.download_button(
-            label="💾 Descargar ZIP",
-            data=zip_result,
-            file_name="ASISTENCIAS.zip",
-            mime="application/zip"
-        )
-# 👣 Footer opcional
-st.markdown("<hr style='margin-top:40px;'>", unsafe_allow_html=True)
-st.markdown("Desarrollado por Ismael León – © 2025", unsafe_allow_html=True)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with st.spinner("🔍 Procesando PDF..."):
+            zip_path, vistas_previas = procesar_pdf(uploaded_file, tmpdir, mostrar_texto=ver_texto)
+
+        if zip_path:
+            st.success("✅ ¡ZIP generado correctamente!")
+            with open(zip_path, "rb") as f:
+                st.download_button(
+                    label="📥 Descargar ZIP",
+                    data=f,
+                    file_name="asistencias.zip",
+                    mime="application/zip"
+                )
+        else:
+            st.error("❌ No se generó ningún archivo. Verifica que las páginas tengan al menos 10 líneas y datos válidos.")
+
+        if ver_texto and vistas_previas:
+            st.divider()
+            st.subheader("🧾 Texto extraído por página impar (primeras 15 líneas)")
+            for pagina, texto in vistas_previas:
+                lineas = texto.strip().splitlines()
+                st.markdown(f"### Página {pagina} — {len(lineas)} líneas detectadas")
+                vista = "\n".join([f"{i+1:02d}: {linea}" for i, linea in enumerate(lineas[:15])])
+                st.code(vista, language="text")
