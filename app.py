@@ -5,14 +5,14 @@ import os
 from zipfile import ZipFile
 import tempfile
 
-# --- FUNCIONES ---
+# --- FUNCIONES ---  - BY ISMAEL LEON
 
 def extraer_datos_por_lineas(texto):
     lineas = texto.strip().splitlines()
     if len(lineas) < 10:
         return None, None, None
 
-    # Línea 5: fecha en formato dd/mm/yyyy
+    # Línea 5: fecha en formato dd/mm/yyyy  - BY ISMAEL LEON
     linea_fecha = lineas[4].strip()
     match_mes = re.search(r'\d{2}/(\d{2})/2025', linea_fecha)
     mes_num = match_mes.group(1) if match_mes else None
@@ -24,12 +24,12 @@ def extraer_datos_por_lineas(texto):
     }
     mes = meses.get(mes_num, 'MES') if mes_num else None
 
-    # Línea 8: RUT
+    # Línea 8: RUT - BY ISMAEL LEON
     rut = lineas[7].strip()
     if rut.startswith("65.191"):
         return None, None, None
 
-    # Línea 9: nombre completo
+    # Línea 9: nombre completo - BY ISMAEL LEON
     nombre = lineas[8].strip()
 
     return mes, rut, nombre
@@ -39,7 +39,7 @@ def procesar_pdf(file, temp_dir, mostrar_texto=False):
     archivos = []
     vistas_previas = []
 
-    for i in range(0, len(doc), 2):  # solo páginas impares
+    for i in range(0, len(doc), 2):  # solo páginas impares - BY ISMAEL LEON
         pagina = doc.load_page(i)
         texto = pagina.get_text().upper()
 
@@ -69,7 +69,7 @@ def procesar_pdf(file, temp_dir, mostrar_texto=False):
 
     return zip_path, vistas_previas
 
-# --- INTERFAZ STREAMLIT ---
+# --- INTERFAZ STREAMLIT ---- BY ISMAEL LEON
 
 st.set_page_config(page_title="Separador de Asistencia", page_icon="🗂️")
 st.title("🗂️ Separador de Asistencias por Persona")
@@ -109,7 +109,7 @@ if uploaded_file:
                 vista = "\n".join([f"{i+1:02d}: {linea}" for i, linea in enumerate(lineas[:15])])
                 st.code(vista, language="text")
 
-# 👣 Footer opcional
+# 👣 Footer opcional - BY ISMAEL LEON
 st.markdown("<hr style='margin-top:40px;'>", unsafe_allow_html=True)
 st.markdown("Desarrollado por Ismael León – © 2025", unsafe_allow_html=True)
 
